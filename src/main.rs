@@ -8,6 +8,42 @@
 // BufRead is what Rust calls a Trait (kind of like an interface/contract).
 // BufRead unlocks the ability to read Streams line-by-line.
 use std::io::{self, BufRead};
+use serde_json::Value;
+
+struct LogEntry {
+    ts: String,
+    level: String,
+    msg: String,
+    raw: String
+}
+
+fn parse_line(line: &str) -> LogEntry {
+    // match is a superpowerd switch statemn -> rust wont compile unless code is
+    // -written to handle every single possible outcome of it.
+    // &line -> passing by reference. Allows the JSON parser to borrow the memory
+    // address where the string lives, rather that copying the whole string to
+    // the new buffer.
+    // ::<serde_json::value> is called the "turbofish" syntax.
+    // It tells the parser exactly what memory layout to use. In here we tells it to
+    // parse the string to an unstrauctured, generic JSON tree (a Value).
+    match serde_json::from_str::<Value>(line){
+        Ok(json) => LogEntry {
+            // Success branch -> Successfully parsed the JSON string
+            // .unwrap_or() is an alternative to .unwrap()
+            // in here instead of crashing it gives the fallback string "???"
+            ts:     json["ts"].as_str().unwrap_or("???").to_string(),
+            level:  json["level"].as_str().unwrap_or("???").to_string(),
+            msg:    json["msg"].as_str().unwrap_or("???").to_string(),
+            raw:    line.to_string(),
+        },
+        Err(_) => LogEntry {
+            ts:     String::new(),
+            level:  String::new(),
+            msg:    String::new(),
+            raw:    line.to_string(),
+        },
+    }
+}
 
 fn main(){
     // io::stdin() grabs a global handle to the operating system's standard input stream
@@ -30,37 +66,16 @@ fn main(){
         // -of failing to read this memory address or stream, instantly crash(panic)
         // the program right here.
         let line = line.unwrap();
+        let entry = parse_line(&line);
 
-        // match is a superpowerd switch statemn -> rust wont compile unless code is
-        // -written to handle every single possible outcome of it.
-        // &line -> passing by reference. Allows the JSON parser to borrow the memory
-        // address where the string lives, rather that copying the whole string to
-        // the new buffer.
-        // ::<serde_json::value> is called the "turbofish" syntax.
-        // It tells the parser exactly what memory layout to use. In here we tells it to
-        // parse the string to an unstrauctured, generic JSON tree (a Value).
-        match serde_json::from_str::<serde_json::Value>(&line){
-            Ok(json) => {
-                // Success branch -> Successfully parsed the JSON string
-                // .unwrap_or() is an alternative to .unwrap()
-                // in here instead of crashing it gives the fallback string "???"
-                let level = json["level"].as_str().unwrap_or("???");
-                let msg = json["msg"].as_str().unwrap_or("???");
-                let ts = json["ts"].as_str().unwrap_or("???");
-
-                // ! means println is a macro.
-                // Rust expands the macro to ensure types and memory align perfectly
-                // before the code even compiles
-                println!("[{ts}] {level:5} | {msg}");
-            }
-            Err(_) => {
-                // Not JSON -> print raw
-                println!("{line}");
-            }
+        // ! means println is a macro.
+        // Rust expands the macro to ensure types and memory align perfectly
+        // before the code even compiles
+        if entry.ts.is_empty(){
+            println!("{}", entry.raw);
+        } else {
+            println!("[{}] {:5} | {}", entry.ts, entry.level, entry.msg);
         }
+
     }
 }
-
-/*
-  I wish flowers could grow on my skin. That way I would imagine death a little more pleasently.
-*/
