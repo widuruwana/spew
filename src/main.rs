@@ -158,6 +158,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let mut typing = false;         // Whether the filter bar is active  
     let mut frozen = false;         // Whether the viewpoint is paused.
     let mut scroll: usize = 0;      // Which index is currently selected/highlighted
+    // Option<usize> means either None (no line expanded) or Some(i) (line i is expanded),
+    //-this is how to track which line the panel is showing.
+    let mut expanded: Option<usize> = None;
 
     // print loop
     loop{
@@ -229,12 +232,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
             // "terminal.draw()" takes a closure that receives f(frame)
             terminal.draw(|f| {
+                // If something expanded -> 50% / 50% / 1 line (status bar)
+                // If nothing is expaned -> Everything to log list / hide middle / 1 line
+                let constraints = if expanded.is_some(){
+                    vec![Constraint::Percentage(50), Constraint::Percentage(50), Constraint::Length(1)]
+                }else{
+                    vec![Constraint::Min(1), Constraint::Length(0), Constraint::Length(1)]
+                };
                 // Layout splits the screen vertically into two chunks.
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
-                    // Min(1) -> Log list takes all available space
-                    // Length(1) -> Status bar is only 1 line tall
-                    .constraints([Constraint::Min(1), Constraint::Length(1)])
+                    .constraints(constraints)
                     .split(f.area());
 
                 // Creates the list widget from the items and renders it into the top chunk
@@ -242,11 +250,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     .block(Block::default().borders(Borders::NONE));
                 f.render_widget(list, chunks[0]);
 
+                if let Some(idx) = expanded {
+                    let buf = buffer.read().unwrap();
+                    let entries = buf.filtered(&query);
+                    if let Some(entry) = entries.get(idx){
+                        let detail = match serde_json::from_str::<Value>(&entry.raw){
+                            Ok(json) => serde_json::to_string_pretty(&json).unwrap_or(entry.raw.clone()),
+                            Err(_) => entry.raw.clone()
+                        };
+                        let panel = ratatui::widgets::Paragraph::new(detail)
+                            .block(Block::default().borders(Borders::ALL).title(" Detail "))
+                            .style(Style::default().fg(Color::White));
+                        f.render_widget(panel, chunks[1]);
+                    }
+                }
+
                 // Renders the status bar as a Paragraph into the bottom chunk.
                 // Black text on white background
                 let status_widget = ratatui::widgets::Paragraph::new(status)
                     .style(Style::default().fg(Color::Black).bg(Color::White));
-                f.render_widget(status_widget, chunks[1]);
+                f.render_widget(status_widget, chunks[2]);
             })?;
         }
 
@@ -268,8 +291,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                         typing = false;                 //-And clears the search.
                         query.clear();
                     }
-                    KeyCode::Enter => { 
-                        typing = false;
+                    KeyCode::Enter if !typing=> { 
+                        if expanded == Some(scroll) {
+                            expanded = None;
+                        } else {
+                            expanded = Some(scroll);
+                        }
                     }
                     KeyCode::Backspace if typing => {
                         query.pop();
