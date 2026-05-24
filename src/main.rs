@@ -19,6 +19,31 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use serde_json::Value;
 
+use ratatui::{
+    // ratatui needs a backend driver to talk to terminal (which is Crossterm)
+    backend::CrosstermBackend,
+    // ratatui divides the screen into rectangular chunks, layout is how we define
+    //-those chunks. ( Its low-key like CSS flexbox )
+    layout::{Constraint, Direction, Layout},
+    // How we color and bold text
+    style::{Color, Modifier, Style},
+    // UI widgets. Block is a container with optional borders. List holds the log lines.
+    widgets::{Block, Borders, List, ListItem},
+    Terminal
+};
+
+use crossterm::{
+    // How you read keyboard input, every keypress comes in as an event
+    event::{self, Event, KeyCode},
+    execute,
+    // enable/disable_raw_mode makes every single keypress available instantly (normally termi-
+    //-nal buffers keypresses until we hit enter). This is essential for TUI
+    // Terminals have two screens, normal one is where we type commands, and alternate one is
+    //-used by appls like vim. We switch into alternate screen so spew dont trash our terminal
+    //-history. we then swtich back when we quit.
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}
+};
+
 // _ is a visual seperator like a comma
 const BUFFER_CAPACITY: usize = 10_000;
 
@@ -96,7 +121,8 @@ impl RingBuffer {
 
 }
 
-fn main(){
+// if the terminal environment cannot be initialized, it returns an error
+fn main() -> Result<(), Box<dyn std::error::Error>>{
     let buffer = Arc::new(RwLock::new(RingBuffer::new(BUFFER_CAPACITY)));
     let buffer_writer = Arc::clone(&buffer);
 
@@ -116,23 +142,166 @@ fn main(){
             buffer_writer.write().unwrap().push(entry);
         }
     });
-        
-    // temp print loop
+
+    // Setup terminal
+    enable_raw_mode()?; // Now key presses are immediate
+    let mut stdout = io::stdout(); // grab a handler to stdout
+
+    // execute! is a macro that sends commands to the terminal and is used to switch
+    //-screens and restore them.
+    execute!(stdout, EnterAlternateScreen)?; // switch to alt screen
+    let backend = CrosstermBackend::new(stdout); // wrap stdout in Crossterm backend 
+    let mut terminal = Terminal::new(backend)?; // Wrap that in ratatui terminal
+    // ^ this is also the object we called .draw() on
+
+    let mut query = String::new();  // The current search string the user is typing
+    let mut typing = false;         // Whether the filter bar is active  
+    let mut frozen = false;         // Whether the viewpoint is paused.
+    let mut scroll: usize = 0;      // Which index is currently selected/highlighted
+
+    // print loop
     loop{
-        // Pauses the main thread for 100 ms so its doesnt burn 100% of the CPU
-        //-constantly checking for updates
-        thread::sleep(std::time::Duration::from_millis(100));
-        let buf = buffer.read().unwrap();
-        let entries = buf.filtered("");
-        for entry in entries {
-            if entry.ts.is_empty(){
-                println!("{}", entry.raw);
+        // Draw
+        {
+            let buf = buffer.read().unwrap();
+            let entries = buf.filtered(&query);
+            let total = entries.len();
+
+            // Auto scroll to bottom unless frozen
+            if !frozen && total > 0 {
+                // saturating_sub(1) is "total - 1" but safe. If tot = 0, it wont go below 0.
+                scroll = total.saturating_sub(1);
+            }
+
+            // Iterates every log entry. enumerate() gives both index i and entry e
+            let items: Vec<ListItem> = entries
+                .iter()
+                .enumerate()
+                .map(|(i, e)| {
+                    // Non JSON lines are shown raw. Otherwise format it as the clean table row.
+                    let line = if e.ts.is_empty() {
+                        e.raw.clone()
+                    } else {
+                        format!("[{}] {:5} | {}", e.ts, e.level, e.msg)
+                    };
+
+                    // Errors are Red and BOLD.
+                    // Warning are Yellow.
+                    // Everything else is Gray.
+                    let style = if e.level == "error" || e.level == "ERROR" {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                    } else if e.level == "warn" || e.level == "WARN" {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    };
+
+                    // current selected line gets REVERSED which means foreground and
+                    //-background colors flips, making it look highlighted regardless of the
+                    //-color scheme.
+                    let selected = i == scroll;
+                    let style = if selected {
+                        style.add_modifier(Modifier::REVERSED)
+                    } else {
+                        style
+                    };
+
+                    // "ListItem::new(line)" Wraps the formatted string into a ListItem widget.
+                    // Ratatui's List widget doesnt accept raw strings directly, it only 
+                    //-accepts ListItems.
+                    // ".style(style) applies the color and modifer that was decided earlier.
+                    ListItem::new(line).style(style)
+                }) // closes .map()
+                .collect(); // .map() produces a lazy iterator, it havent done anything yet.
+                            // .collect() is what forces it to run and gathers all the resulting
+                            //-ListItems into a Vec<ListItem> that ratatui can use.
+
+            // three possible status bar status.
+            // typing -> shows current query with / prefix like vim
+            // when frozen or live, show keybinding hints
+            let status = if typing {
+                format!("/ {}", query)
+            } else if frozen {
+                format!("FROZEN | q: quit  /: filter  Space: unfreeze  ↑↓: scroll")
             } else {
-                println!("[{}] {:5} | {}", entry.ts, entry.level, entry.msg);
+                format!("LIVE   | q: quit  /: filter  Space: freeze    ↑↓: scroll")
+            };
+
+            // "terminal.draw()" takes a closure that receives f(frame)
+            terminal.draw(|f| {
+                // Layout splits the screen vertically into two chunks.
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    // Min(1) -> Log list takes all available space
+                    // Length(1) -> Status bar is only 1 line tall
+                    .constraints([Constraint::Min(1), Constraint::Length(1)])
+                    .split(f.area());
+
+                // Creates the list widget from the items and renders it into the top chunk
+                let list = List::new(items)
+                    .block(Block::default().borders(Borders::NONE));
+                f.render_widget(list, chunks[0]);
+
+                // Renders the status bar as a Paragraph into the bottom chunk.
+                // Black text on white background
+                let status_widget = ratatui::widgets::Paragraph::new(status)
+                    .style(Style::default().fg(Color::Black).bg(Color::White));
+                f.render_widget(status_widget, chunks[1]);
+            })?;
+        }
+
+        // Input
+        // Screen refereshes at minimum every 100ms
+        if event::poll(std::time::Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Char('q') if !typing => {  // "q" -> quit
+                        break;                           
+                    }
+                    KeyCode::Char(' ') if !typing => {  // "spacebar" -> freeze
+                        frozen = !frozen;
+                    }
+                    KeyCode::Char('/') if !typing => {  // "/" -> fileter bar
+                        typing = true;
+                    }
+                    KeyCode::Esc => {                   // "Esc" -> exits typing mode
+                        typing = false;                 //-And clears the search.
+                        query.clear();
+                    }
+                    KeyCode::Enter => { 
+                        typing = false;
+                    }
+                    KeyCode::Backspace if typing => {
+                        query.pop();
+                    }
+                    KeyCode::Char(c) if typing => {
+                        query.push(c);
+                    }
+                    // Scrolling up autmatically freezes the viewport
+                    KeyCode::Up => {
+                        frozen = true;
+                        scroll = scroll.saturating_sub(1);
+                    }
+                    KeyCode::Down => {
+                        // Graphs the read lock on the ring buffer to check how many entries
+                        //-currently exist.
+                        let buf = buffer.read().unwrap();
+                        // Runs the current search query and counts how many lines match.
+                        //-(Total number of lines visible on the screen)
+                        let total = buf.filtered(&query).len();
+                        // Checks if there is actually a line below the current one
+                        if scroll + 1 < total {
+                            scroll += 1; // Moves selection one line down
+                        }
+                    }
+                    _ => {} // catch-all pattern in Rust match statements.
+                }
             }
         }
-        if !buf.entries.is_empty() {
-            break;
-        }
-    }
+    }       
+
+    // Cleanup Terminal
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    Ok(())
 }
