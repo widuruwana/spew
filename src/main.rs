@@ -44,6 +44,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}
 };
 
+const CONTEXT_LINES: usize = 5;
 // _ is a visual seperator like a comma
 const BUFFER_CAPACITY: usize = 10_000;
 
@@ -106,16 +107,55 @@ impl RingBuffer {
         self.entries.push_back(entry);
     }
 
-    // &self tells rust it only reads data, returns a list of pointer to the logs
-    fn filtered(&self, query: &str)-> Vec<&LogEntry> {
-        // if no search term, instantly bundles all logs into a list and returns
+    // context: usize -> number of lines to show before and after each match
+    // Returns a tuple of three things per entry.
+    //      |> usize -> Original index
+    //      |> bool -> is an actual match or just surronding context
+    //      |> &LogEntry -> Entry itself
+    fn filtered(&self, query: &str, context: usize)-> Vec<(usize, bool, &LogEntry)> {
         if query.is_empty(){
-            return self.entries.iter().collect();
+            return self.entries
+                .iter()
+                .enumerate()
+                // false here means dont highlight anything
+                .map(|(i, e)| (i, false, e))
+                .collect();
         }
-        self.entries
+        
+        let len = self.entries.len(); // total no. of entries in the buffer
+        
+        // BTreeSet will hold every line index we want to display, both matches and
+        //-their surronding context lines. Also Automatically deduplicates and keep things sorted
+        let mut indices = std::collections::BTreeSet::new();
+        // Hashset tracking only the indices that actually matched the query
+        // Keep to highlight the real match and keep the context lines dim
+        let mut matched = std::collections::HashSet::new();
+
+        // Loop through every entry log, if entries raw text contain search query its a match
+        for (i, e) in self.entries.iter().enumerate() {
+            if e.raw.contains(query) {
+                // Record the index as a real match in matched HashSet
+                matched.insert(i);
+                // Calculate the window of lines to show around this match.
+                // start is context lines before the match, saturating_sub prevent going < 0.
+                // end is context lines after the match. .min(len) prevents going > End of Buffer
+                let start = i.saturating_sub(context);
+                let end = (i + context + 1).min(len);
+                for j in start..end {
+                    // Add every index in that window to BTreeSet
+                    indices.insert(j);
+                }
+            }
+        }
+
+        // Takes the final sorted, deduplicated set of indices and build the return value
+        // for each index i,
+        //      i -> the index
+        //      matched.contains(&i) -> true if actual match, false if context
+        //      &self.entries[i] -> actual log entry at that position
+        indices
             .iter()
-            // iterates through the every log and check if it contains search phrase and keeps em
-            .filter(|e| e.raw.contains(query))
+            .map(|&i| (i, matched.contains(&i), &self.entries[i]))
             .collect()
     }
 
@@ -167,7 +207,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         // Draw
         {
             let buf = buffer.read().unwrap();
-            let entries = buf.filtered(&query);
+            let entries = buf.filtered(&query, CONTEXT_LINES);
             let total = entries.len();
 
             // Auto scroll to bottom unless frozen
@@ -180,7 +220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
             let items: Vec<ListItem> = entries
                 .iter()
                 .enumerate()
-                .map(|(i, e)| {
+                .map(|(_, (idx, is_match, e))| {
                     // Non JSON lines are shown raw. Otherwise format it as the clean table row.
                     let line = if e.ts.is_empty() {
                         e.raw.clone()
@@ -191,7 +231,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     // Errors are Red and BOLD.
                     // Warning are Yellow.
                     // Everything else is Gray.
-                    let style = if e.level == "error" || e.level == "ERROR" {
+                    let style = if !is_match && !query.is_empty() {
+                        // context lines are dimmed
+                        Style::default().fg(Color::DarkGray)
+                    } else if e.level == "error" || e.level == "ERROR" {
                         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                     } else if e.level == "warn" || e.level == "WARN" {
                         Style::default().fg(Color::Yellow)
@@ -202,7 +245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     // current selected line gets REVERSED which means foreground and
                     //-background colors flips, making it look highlighted regardless of the
                     //-color scheme.
-                    let selected = i == scroll;
+                    let selected = *idx == scroll;
                     let style = if selected {
                         style.add_modifier(Modifier::REVERSED)
                     } else {
@@ -252,11 +295,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
                 if let Some(idx) = expanded {
                     let buf = buffer.read().unwrap();
-                    let entries = buf.filtered(&query);
+                    let entries = buf.filtered(&query, CONTEXT_LINES);
                     if let Some(entry) = entries.get(idx){
-                        let detail = match serde_json::from_str::<Value>(&entry.raw){
-                            Ok(json) => serde_json::to_string_pretty(&json).unwrap_or(entry.raw.clone()),
-                            Err(_) => entry.raw.clone()
+                        let detail = match serde_json::from_str::<Value>(&entry.2.raw){
+                            Ok(json) => serde_json::to_string_pretty(&json).unwrap_or(entry.2.raw.clone()),
+                            Err(_) => entry.2.raw.clone()
                         };
                         let panel = ratatui::widgets::Paragraph::new(detail)
                             .block(Block::default().borders(Borders::ALL).title(" Detail "))
@@ -315,7 +358,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                         let buf = buffer.read().unwrap();
                         // Runs the current search query and counts how many lines match.
                         //-(Total number of lines visible on the screen)
-                        let total = buf.filtered(&query).len();
+                        let total = buf.filtered(&query, CONTEXT_LINES).len();
                         // Checks if there is actually a line below the current one
                         if scroll + 1 < total {
                             scroll += 1; // Moves selection one line down
