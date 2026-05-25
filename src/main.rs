@@ -288,10 +288,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     .constraints(constraints)
                     .split(f.area());
 
-                // Creates the list widget from the items and renders it into the top chunk
-                let list = List::new(items)
-                    .block(Block::default().borders(Borders::NONE));
-                f.render_widget(list, chunks[0]);
+                // Creates the list widget from the items and renders it into the top chunk.
+                // Show "No results for your search" if there are no available items for the query
+                if items.is_empty() && !query.is_empty() {
+                    let empty = ratatui::widgets::Paragraph::new("No results for your search.")
+                        .style(Style::default().fg(Color::DarkGray));
+                    f.render_widget(empty, chunks[0]);
+                } else {
+                    let list = List::new(items)
+                        .block(Block::default().borders(Borders::NONE));
+                    f.render_widget(list, chunks[0]);
+                }
 
                 if let Some(idx) = expanded {
                     let buf = buffer.read().unwrap();
