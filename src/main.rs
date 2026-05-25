@@ -19,6 +19,87 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use serde_json::Value;
 
+use serde::Deserialize;
+
+// Gruvbox dark color palette
+const GRB_RED:     Color = Color::Rgb(204, 36,  29);
+const GRB_YELLOW:  Color = Color::Rgb(215, 153, 33);
+const GRB_GRAY:    Color = Color::Rgb(146, 131, 116);
+const GRB_DIMGRAY: Color = Color::Rgb(80,  73,  69);
+const GRB_WHITE:   Color = Color::Rgb(235, 219, 178);
+const GRB_BG:      Color = Color::Rgb(40,  40,  40);
+const GRB_FG:      Color = Color::Rgb(235, 219, 178);
+
+#[derive(Deserialize)]
+struct ColorConfig {
+    error: Option<String>,
+    warn:  Option<String>,
+    info:  Option<String>,
+    dim:   Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Config {
+    colors: Option<ColorConfig>,
+}
+
+struct Theme {
+    error: Color,
+    warn:  Color,
+    info:  Color,
+    dim:   Color,
+}
+
+impl Theme {
+    fn default() -> Self {
+        Self {
+            error: GRB_RED,
+            warn:  GRB_YELLOW,
+            info:  GRB_GRAY,
+            dim:   GRB_DIMGRAY,
+        }
+    }
+
+    fn load() -> Self {
+        let mut theme = Theme::default();
+
+        let config_path = dirs::home_dir()
+            .map(|h| h.join(".config/spew/config.toml"));
+
+        if let Some(path) = config_path {
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                if let Ok(config) = toml::from_str::<Config>(&contents) {
+                    if let Some(colors) = config.colors {
+                        if let Some(hex) = colors.error {
+                            theme.error = hex_to_color(&hex).unwrap_or(theme.error);
+                        }
+                        if let Some(hex) = colors.warn {
+                            theme.warn  = hex_to_color(&hex).unwrap_or(theme.warn);
+                        }
+                        if let Some(hex) = colors.info {
+                            theme.info  = hex_to_color(&hex).unwrap_or(theme.info);
+                        }
+                        if let Some(hex) = colors.dim {
+                            theme.dim   = hex_to_color(&hex).unwrap_or(theme.dim);
+                        }
+                    }
+                }
+            }
+        }
+
+        theme
+    }
+}
+
+fn hex_to_color(hex: &str) -> Option<Color> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 { return None; }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Color::Rgb(r, g, b))
+}
+
 use ratatui::{
     // ratatui needs a backend driver to talk to terminal (which is Crossterm)
     backend::CrosstermBackend,
@@ -202,6 +283,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     //-this is how to track which line the panel is showing.
     let mut expanded: Option<usize> = None;
 
+    // loading the theme
+    let theme = Theme::load();
+
     // print loop
     loop{
         // Draw
@@ -233,13 +317,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     // Everything else is Gray.
                     let style = if !is_match && !query.is_empty() {
                         // context lines are dimmed
-                        Style::default().fg(Color::DarkGray)
+                        Style::default().fg(theme.dim)
                     } else if e.level == "error" || e.level == "ERROR" {
-                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                        Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
                     } else if e.level == "warn" || e.level == "WARN" {
-                        Style::default().fg(Color::Yellow)
+                        Style::default().fg(theme.warn)
                     } else {
-                        Style::default().fg(Color::Gray)
+                        Style::default().fg(theme.info)
                     };
 
                     // current selected line gets REVERSED which means foreground and
@@ -310,7 +394,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                         };
                         let panel = ratatui::widgets::Paragraph::new(detail)
                             .block(Block::default().borders(Borders::ALL).title(" Detail "))
-                            .style(Style::default().fg(Color::White));
+                            .style(Style::default().fg(GRB_WHITE));
                         f.render_widget(panel, chunks[1]);
                     }
                 }
