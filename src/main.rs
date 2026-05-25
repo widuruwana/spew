@@ -24,13 +24,31 @@ use serde_json::Value;
 use serde::Deserialize;
 
 // Gruvbox dark color palette
-const GRB_RED:     Color = Color::Rgb(204, 36,  29);
-const GRB_YELLOW:  Color = Color::Rgb(215, 153, 33);
-const GRB_GRAY:    Color = Color::Rgb(146, 131, 116);
-const GRB_DIMGRAY: Color = Color::Rgb(80,  73,  69);
-const GRB_WHITE:   Color = Color::Rgb(235, 219, 178);
-const GRB_BG:      Color = Color::Rgb(40,  40,  40);
-const GRB_FG:      Color = Color::Rgb(235, 219, 178);
+const GRB_BG0_H:  Color = Color::Rgb(29,  32,  33);   // darkest bg
+const GRB_BG0:    Color = Color::Rgb(40,  40,  40);   // main bg
+const GRB_BG1:    Color = Color::Rgb(60,  56,  54);   // slightly lighter bg
+const GRB_BG2:    Color = Color::Rgb(80,  73,  69);   // selection bg
+const GRB_BG3:    Color = Color::Rgb(102, 92,  84);   // inactive
+const GRB_BG4:    Color = Color::Rgb(124, 111, 100);  // comments
+const GRB_FG0:    Color = Color::Rgb(251, 241, 199);  // brightest fg
+const GRB_FG1:    Color = Color::Rgb(235, 219, 178);  // main fg
+const GRB_FG2:    Color = Color::Rgb(213, 196, 161);  // dimmer fg
+const GRB_FG3:    Color = Color::Rgb(189, 174, 147);  // even dimmer
+const GRB_FG4:    Color = Color::Rgb(168, 153, 132);  // dimmest fg
+const GRB_RED:    Color = Color::Rgb(204, 36,  29);   // error
+const GRB_RED_L:  Color = Color::Rgb(251, 73,  52);   // bright red
+const GRB_GREEN:  Color = Color::Rgb(152, 151, 26);   // success
+const GRB_GREEN_L:Color = Color::Rgb(184, 187, 38);   // bright green
+const GRB_YELLOW: Color = Color::Rgb(215, 153, 33);   // warn
+const GRB_YELLOW_L:Color= Color::Rgb(250, 189, 47);   // bright yellow
+const GRB_BLUE:   Color = Color::Rgb(69,  133, 136);  // db/query
+const GRB_BLUE_L: Color = Color::Rgb(131, 165, 152);  // bright blue
+const GRB_PURPLE: Color = Color::Rgb(177, 98,  134);  // auth
+const GRB_PURPLE_L:Color = Color::Rgb(211, 134, 155); // bright purple
+const GRB_AQUA:   Color = Color::Rgb(104, 157, 106);  // ok/success
+const GRB_AQUA_L: Color = Color::Rgb(142, 192, 124);  // bright aqua
+const GRB_ORANGE: Color = Color::Rgb(214, 93,  14);   // warning/retry
+const GRB_ORANGE_L:Color = Color::Rgb(254, 128, 25);  // bright orange
 
 // Struct directly maps to the [colors] section in the user's config.toml.
 // #[derive(...)] tells Serde to automatically generate the code that reads the TOML file
@@ -41,6 +59,10 @@ struct ColorConfig {
     warn:  Option<String>,
     info:  Option<String>,
     dim:   Option<String>,
+    db:    Option<String>,
+    auth:  Option<String>,
+    conn:  Option<String>,
+    ok:    Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -50,20 +72,28 @@ struct Config {
 
 // Theme stores resolved Color values ready to be passed directly into Ratatui
 struct Theme {
-    error: Color,
-    warn:  Color,
-    info:  Color,
-    dim:   Color,
+    error:  Color,
+    warn:   Color,
+    info:   Color,
+    dim:    Color,
+    db:     Color,
+    auth:   Color,
+    conn:   Color,
+    ok:     Color,
 }
  
 impl Theme {
     // Default contructor, returns a theme with Gruvbox constatnts baked in.
     fn default() -> Self {
         Self {
-            error: GRB_RED,
-            warn:  GRB_YELLOW,
-            info:  GRB_GRAY,
-            dim:   GRB_DIMGRAY,
+            error: GRB_RED_L,
+            warn:  GRB_YELLOW_L,
+            info:  GRB_FG3,
+            dim:   GRB_BG4,
+            db:    GRB_BLUE_L,
+            auth:  GRB_PURPLE_L,
+            conn:  GRB_ORANGE_L,
+            ok:    GRB_FG3,
         }
     }
 
@@ -78,17 +108,29 @@ impl Theme {
             if let Ok(contents) = std::fs::read_to_string(&path) {
                 if let Ok(config) = toml::from_str::<Config>(&contents) {
                     if let Some(colors) = config.colors {
-                        if let Some(hex) = colors.error {
+                        if let Some(hex) = colors.error{
                             theme.error = hex_to_color(&hex).unwrap_or(theme.error);
                         }
-                        if let Some(hex) = colors.warn {
-                            theme.warn  = hex_to_color(&hex).unwrap_or(theme.warn);
+                        if let Some(hex) = colors.warn{
+                            theme.warn = hex_to_color(&hex).unwrap_or(theme.warn);
                         }
-                        if let Some(hex) = colors.info {
-                            theme.info  = hex_to_color(&hex).unwrap_or(theme.info);
+                        if let Some(hex) = colors.info{
+                            theme.info = hex_to_color(&hex).unwrap_or(theme.info);
                         }
-                        if let Some(hex) = colors.dim {
-                            theme.dim   = hex_to_color(&hex).unwrap_or(theme.dim);
+                        if let Some(hex) = colors.dim{
+                            theme.dim = hex_to_color(&hex).unwrap_or(theme.dim);
+                        }
+                        if let Some(hex) = colors.db{
+                            theme.db = hex_to_color(&hex).unwrap_or(theme.db);
+                        }
+                        if let Some(hex) = colors.auth{
+                            theme.auth = hex_to_color(&hex).unwrap_or(theme.auth);
+                        }
+                        if let Some(hex) = colors.conn{
+                            theme.conn = hex_to_color(&hex).unwrap_or(theme.conn);
+                        }
+                        if let Some(hex) = colors.ok{
+                            theme.ok = hex_to_color(&hex).unwrap_or(theme.ok);
                         }
                     }
                 }
@@ -145,18 +187,20 @@ const BUFFER_CAPACITY: usize = 10_000;
 
 #[derive(Clone)] // Tell rust to automatically write the code required to dup/cpy this struct.
 struct LogEntry {
+    id: usize,      // Unique Identifier
     ts: String,     // stroes timestamp
     level: String,  // stores the log severity level (ex: "INFO", "ERROR")
     msg: String,    // stores the log message text
     raw: String     // stores unparsed raw log line as fallback
 }
 
-fn parse_line(line: &str) -> LogEntry {
+fn parse_line(line: &str, id: usize) -> LogEntry {
     // ::<serde_json::value> is called the "turbofish" syntax.
     // It tells the parser exactly what memory layout to use. In here we tells it to
     // parse the string to an unstrauctured, generic JSON tree (a Value).
     match serde_json::from_str::<Value>(line){
         Ok(json) => LogEntry {
+            id,
             // .unwrap_or() is an alternative to .unwrap()
             // in here instead of crashing it gives the fallback string "???"
             ts:     json["ts"].as_str().unwrap_or("").to_string(),
@@ -165,6 +209,7 @@ fn parse_line(line: &str) -> LogEntry {
             raw:    line.to_string(),
         },
         Err(_) => LogEntry {
+            id,
             ts:     String::new(),
             level:  String::new(),
             msg:    String::new(),
@@ -267,13 +312,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     //-thread is still using it.
     thread::spawn(move || {
         let stdin = io::stdin();
+        let mut next_id: usize = 0;
+
         for line in stdin.lock().lines(){
             // .lines() iterator returns Result<String, Error>
             // .unwrap() tells the compiler that it expect this to succeed but in a case
             // -of failing to read this memory address or stream, instantly crash(panic)
             // the program right here.
             let line = line.unwrap();
-            let entry = parse_line(&line);
+            let entry = parse_line(&line, next_id);
+            next_id = next_id.wrapping_add(1);
+
             buffer_writer.write().unwrap().push(entry);
         }
     });
@@ -293,9 +342,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let mut typing = false;         // Whether the filter bar is active  
     let mut frozen = false;         // Whether the viewpoint is paused.
     let mut scroll: usize = 0;      // Which index is currently selected/highlighted
+    let mut selected_id: Option<usize> = None; // Tracks the exact log we are locked onto
     // Option<usize> means either None (no line expanded) or Some(i) (line i is expanded),
     //-this is how to track which line the panel is showing.
-    let mut expanded: Option<usize> = None;
+    let mut expanded: bool = false;
 
     // view_offset is the index of the first visible line.
     // The viewport only renders from view_offset to view_offset + visible_height
@@ -311,24 +361,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
             let buf = buffer.read().unwrap();
             let entries = buf.filtered(&query, CONTEXT_LINES);
             let total = entries.len();
-    
-            if !frozen && total > 0 {
-                scroll = total.saturating_sub(1);
-            }
 
             let term_height = terminal.size()?.height as usize;
             // When expanded the log list only gets half the screen
-            let list_height = if expanded.is_some() {
+            let list_height = if expanded {
                 term_height / 2
             } else {
                 term_height.saturating_sub(1) // minus status bar
             };
 
-            // Keep view_offset in sync so scroll is always visible
-            if scroll < view_offset {
-                view_offset = scroll;
-            } else if scroll >= view_offset + list_height {
-                view_offset = scroll.saturating_sub(list_height - 1);
+            if !frozen {
+                // Live mode: chase the bottom
+                if total > 0 {
+                    scroll = total.saturating_sub(1);
+                    // Always record the ID of the newest log so if we freeze, we anchor to it.
+                    selected_id = Some(entries[scroll].2.id);
+                }
+                view_offset = scroll.saturating_sub(list_height.saturating_sub(1));
+            }else {
+                // Frozen mode: Find where our anchored ID moved to after buffer shifts
+                if let Some(target_id) = selected_id {
+                    if let Some(new_idx) = entries.iter().position(|(_, _, e)| e.id == target_id) {
+                        scroll = new_idx; // Update scroll to wherever the log shifted to
+                    } else {
+                        // The log we were looking at fell off the back of the 10,000 capacity buffer.
+                        // Force unfreeze so the UI doesn't crash.
+                        frozen = false;
+                        expanded = false;
+                    }
+                }
+
+                // Keep view_offset clamped around our newly calculated scroll position
+                if scroll < view_offset {
+                    view_offset = scroll;
+                } else if scroll >= view_offset + list_height {
+                    view_offset = scroll.saturating_sub(list_height.saturating_sub(1));
+                }
             }
 
             let visible_entries: Vec<_> = entries
@@ -349,16 +417,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     let style = if !is_match && !query.is_empty() {
                         Style::default().fg(theme.dim)
                     } else if e.level == "error" || e.level == "ERROR" {
-                        Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
+                        Style::default().fg(theme.error).bg(GRB_BG1).add_modifier(Modifier::BOLD)
                     } else if e.level == "warn" || e.level == "WARN" {
-                        Style::default().fg(theme.warn)
+                        Style::default().fg(theme.warn).bg(GRB_BG0)
+                    } else if e.msg.contains("db") || e.msg.contains("query") || e.msg.contains("sql") {
+                        Style::default().fg(theme.db)
+                    } else if e.msg.contains("auth") || e.msg.contains("login") || e.msg.contains("token") {
+                        Style::default().fg(theme.auth)
+                    } else if e.msg.contains("connect") || e.msg.contains("retry") || e.msg.contains("timeout") {
+                        Style::default().fg(theme.conn)
+                    } else if e.msg.contains("ok") || e.msg.contains("success") || e.msg.contains("handled") {
+                        Style::default().fg(theme.ok)
                     } else {
                         Style::default().fg(theme.info)
                     };
-    
+
                     let selected = *idx == scroll;
                     let style = if selected {
-                        style.add_modifier(Modifier::REVERSED)
+                        style.add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED)
                     } else {
                         style
                     };
@@ -370,13 +446,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
             let status = if typing {
                 format!("/ {}", query)
             } else if frozen {
-                if expanded.is_some() {
+                if expanded {
                     format!("FROZEN | q: quit  /: filter  Space: unfreeze  ↑↓: scroll  Enter: collapse")
                 } else {
                     format!("FROZEN | q: quit  /: filter  Space: unfreeze  ↑↓: scroll  Enter: expand")
                 }
             } else {
-                if expanded.is_some() {
+                if expanded {
                     format!("LIVE   | q: quit  /: filter  Space: freeze    ↑↓: scroll  Enter: collapse")
                 } else {
                     format!("LIVE   | q: quit  /: filter  Space: freeze    ↑↓: scroll  Enter: expand")
@@ -384,7 +460,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
             };
 
             // Find the expanded entry using scroll position in the filtered list
-            let expanded_detail = if let Some(_) = expanded {
+            let expanded_detail = if expanded {
                 entries.get(scroll).map(|(_, _, e)| {
                     match serde_json::from_str::<Value>(&e.raw) {
                         Ok(json) => serde_json::to_string_pretty(&json)
@@ -397,7 +473,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
             };
 
             terminal.draw(|f| {
-                let constraints = if expanded.is_some() {
+                let constraints = if expanded {
                     vec![
                         Constraint::Percentage(50),
                         Constraint::Percentage(50),
@@ -414,25 +490,73 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
                 if items.is_empty() && !query.is_empty() {
                     let empty = ratatui::widgets::Paragraph::new("No results for your search.")
-                        .style(Style::default().fg(GRB_DIMGRAY).bg(GRB_BG));
+                        .style(Style::default().fg(GRB_BG4).bg(GRB_BG0));
                     f.render_widget(empty, chunks[0]);
                 } else {
                     let list = List::new(items)
                         .block(Block::default().borders(Borders::NONE)
-                        .style(Style::default().bg(GRB_BG)));
+                        .style(Style::default().bg(GRB_BG0)));
                     f.render_widget(list, chunks[0]);
                 }
 
                 if let Some(detail) = expanded_detail {
-                    let panel = ratatui::widgets::Paragraph::new(detail)
-                        .block(Block::default().borders(Borders::ALL).title(" Detail ")
-                        .style(Style::default().bg(GRB_BG).fg(GRB_GRAY)))
-                        .style(Style::default().fg(GRB_WHITE).bg(GRB_BG));
+                    // Colorize JSON lines in the detail panel
+                    let colored_lines: Vec<ratatui::text::Line> = detail
+                    .lines()
+                    .map(|l| {
+                            let trimmed = l.trim();
+                            if trimmed == "{" || trimmed == "}" || trimmed == "{," || trimmed == "}," {
+                                ratatui::text::Line::from(
+                                    ratatui::text::Span::styled(l.to_string(), Style::default().fg(GRB_BG4))
+                                )
+                            } else if trimmed.starts_with('"') && trimmed.contains(':') {
+                                if let Some(colon) = trimmed.find(':') {
+                                    let key = &trimmed[..colon + 1];
+                                    let value = trimmed[colon + 1..].trim();
+                                    let indent = &l[..l.len() - l.trim_start().len()];
+
+                                    let value_style = if value.starts_with('"') {
+                                        Style::default().fg(GRB_GREEN_L)
+                                    } else if value == "true" || value == "false" {
+                                        Style::default().fg(GRB_ORANGE_L)
+                                    } else if value.starts_with(|c: char| c.is_numeric() || c == '-') {
+                                        Style::default().fg(GRB_PURPLE_L)
+                                    } else {
+                                        Style::default().fg(GRB_FG2)
+                                    };
+
+                                    ratatui::text::Line::from(vec![
+                                        ratatui::text::Span::raw(indent.to_string()),
+                                        ratatui::text::Span::styled(key.to_string(), Style::default().fg(GRB_AQUA_L)),
+                                        ratatui::text::Span::raw(" "),
+                                        ratatui::text::Span::styled(value.to_string(), value_style),
+                                    ])
+                                } else {
+                                    ratatui::text::Line::from(
+                                        ratatui::text::Span::styled(l.to_string(), Style::default().fg(GRB_FG1))
+                                    )
+                                }
+                            } else {
+                                ratatui::text::Line::from(
+                                    ratatui::text::Span::styled(l.to_string(), Style::default().fg(GRB_FG2))
+                                )
+                            }
+                        })
+                        .collect();
+
+                        let panel = ratatui::widgets::Paragraph::new(colored_lines)
+                            .block(Block::default()
+                                .borders(Borders::ALL)
+                                .title(" -> Detail ")
+                                .border_style(Style::default().fg(GRB_BG3))
+                                .title_style(Style::default().fg(GRB_YELLOW).add_modifier(Modifier::BOLD))
+                                .style(Style::default().bg(GRB_BG0_H)))
+                            .style(Style::default().bg(GRB_BG0_H));
                     f.render_widget(panel, chunks[1]);
                 }
         
-                let status_widget = ratatui::widgets::Paragraph::new(status)
-                    .style(Style::default().fg(GRB_BG).bg(GRB_FG));
+                let status_widget = ratatui::widgets::Paragraph::new(format!(" {}", status))
+                    .style(Style::default().fg(GRB_BG0).bg(GRB_YELLOW));
                 f.render_widget(status_widget, chunks[2]);
             })?;
         }
@@ -447,6 +571,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     }
                     KeyCode::Char(' ') if !typing => {  // "spacebar" -> freeze
                         frozen = !frozen;
+                        if !frozen {
+                            expanded = false; // collapse panel when going live
+
+                            // Snap selection back to the newest log
+                            let buf = buffer.read().unwrap();
+                            let total = buf.filtered(&query, CONTEXT_LINES).len();
+                            scroll = total.saturating_sub(1);
+                        }
                     }
                     KeyCode::Char('/') if !typing => {  // "/" -> fileter bar
                         typing = true;
@@ -455,11 +587,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                         typing = false;                 //-And clears the search.
                         query.clear();
                     }
-                    KeyCode::Enter if !typing=> { 
-                        if expanded.is_some() {
-                            expanded = None;
-                        } else {
-                            expanded = Some(scroll);
+                    KeyCode::Enter => {
+                        if typing {
+                            // if in search bar, closes it.
+                            typing = false
+                        }else{
+                            // if navigating toggles a detailed panel
+                            frozen = true;
+                            if expanded {
+                                expanded = false;
+                            } else {
+                                expanded = true;
+                            }
                         }
                     }
                     KeyCode::Backspace if typing => {
@@ -471,18 +610,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     // Scrolling up autmatically freezes the viewport
                     KeyCode::Up => {
                         frozen = true;
-                        scroll = scroll.saturating_sub(1);
+
+                        let buf = buffer.read().unwrap();
+                        let entries = buf.filtered(&query, CONTEXT_LINES);
+                        
+                        if scroll > 0 && !entries.is_empty(){
+                            scroll -= 1;
+                            selected_id = Some(entries[scroll].2.id);
+                        }
                     }
                     KeyCode::Down => {
+                        frozen = true;
                         // Graphs the read lock on the ring buffer to check how many entries
                         //-currently exist.
                         let buf = buffer.read().unwrap();
                         // Runs the current search query and counts how many lines match.
                         //-(Total number of lines visible on the screen)
-                        let total = buf.filtered(&query, CONTEXT_LINES).len();
+                        let entries = buf.filtered(&query, CONTEXT_LINES);
+                        let total = entries.len();
                         // Checks if there is actually a line below the current one
                         if scroll + 1 < total {
                             scroll += 1; // Moves selection one line down
+                            selected_id = Some(entries[scroll].2.id);
                         }
                     }
                     _ => {} // catch-all pattern in Rust match statements.
