@@ -19,6 +19,8 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use serde_json::Value;
 
+// Serde is the standard Rust Serialization library. Deserialize is a trait that lets Rust
+//-Automatically read a TOML file and map its content into a Rust struct.
 use serde::Deserialize;
 
 // Gruvbox dark color palette
@@ -30,6 +32,9 @@ const GRB_WHITE:   Color = Color::Rgb(235, 219, 178);
 const GRB_BG:      Color = Color::Rgb(40,  40,  40);
 const GRB_FG:      Color = Color::Rgb(235, 219, 178);
 
+// Struct directly maps to the [colors] section in the user's config.toml.
+// #[derive(...)] tells Serde to automatically generate the code that reads the TOML file
+//-into this struct.
 #[derive(Deserialize)]
 struct ColorConfig {
     error: Option<String>,
@@ -43,6 +48,7 @@ struct Config {
     colors: Option<ColorConfig>,
 }
 
+// Theme stores resolved Color values ready to be passed directly into Ratatui
 struct Theme {
     error: Color,
     warn:  Color,
@@ -51,6 +57,7 @@ struct Theme {
 }
 
 impl Theme {
+    // Default contructor, returns a theme with Gruvbox constatnts baked in.
     fn default() -> Self {
         Self {
             error: GRB_RED,
@@ -60,6 +67,7 @@ impl Theme {
         }
     }
 
+    // Start with default and attempts to override.
     fn load() -> Self {
         let mut theme = Theme::default();
 
@@ -91,9 +99,15 @@ impl Theme {
     }
 }
 
+// ex: Converts a hex color string like #cc241d" into a ratatui Color:Rgb value
 fn hex_to_color(hex: &str) -> Option<Color> {
     let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 { return None; }
+    if hex.len() != 6 {
+        return None;
+    }
+
+    // slices string into three pairs (red, green, blue) and parse each pair as a 
+    //-base-16 number into a u8(0-255)
     let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
@@ -376,11 +390,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                 // Show "No results for your search" if there are no available items for the query
                 if items.is_empty() && !query.is_empty() {
                     let empty = ratatui::widgets::Paragraph::new("No results for your search.")
-                        .style(Style::default().fg(Color::DarkGray));
+                        .style(Style::default().fg(GRB_DIMGRAY).bg(GRB_BG));
                     f.render_widget(empty, chunks[0]);
                 } else {
                     let list = List::new(items)
-                        .block(Block::default().borders(Borders::NONE));
+                        .block(Block::default().borders(Borders::NONE)
+                        .style(Style::default().bg(GRB_BG)));
                     f.render_widget(list, chunks[0]);
                 }
 
@@ -393,8 +408,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                             Err(_) => entry.2.raw.clone()
                         };
                         let panel = ratatui::widgets::Paragraph::new(detail)
-                            .block(Block::default().borders(Borders::ALL).title(" Detail "))
-                            .style(Style::default().fg(GRB_WHITE));
+                            .block(Block::default().borders(Borders::ALL).title(" Detail ")
+                            .style(Style::default().bg(GRB_BG).fg(GRB_GRAY)))
+                            .style(Style::default().fg(GRB_WHITE).bg(GRB_BG));
                         f.render_widget(panel, chunks[1]);
                     }
                 }
@@ -402,7 +418,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                 // Renders the status bar as a Paragraph into the bottom chunk.
                 // Black text on white background
                 let status_widget = ratatui::widgets::Paragraph::new(status)
-                    .style(Style::default().fg(Color::Black).bg(Color::White));
+                    .style(Style::default().fg(GRB_BG).bg(GRB_FG));
                 f.render_widget(status_widget, chunks[2]);
             })?;
         }
