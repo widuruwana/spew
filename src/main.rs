@@ -55,7 +55,7 @@ struct Theme {
     info:  Color,
     dim:   Color,
 }
-
+ 
 impl Theme {
     // Default contructor, returns a theme with Gruvbox constatnts baked in.
     fn default() -> Self {
@@ -297,6 +297,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     //-this is how to track which line the panel is showing.
     let mut expanded: Option<usize> = None;
 
+    // view_offset is the index of the first visible line.
+    // The viewport only renders from view_offset to view_offset + visible_height
+    let mut view_offset: usize = 0;
+
     // loading the theme
     let theme = Theme::load();
 
@@ -307,30 +311,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
             let buf = buffer.read().unwrap();
             let entries = buf.filtered(&query, CONTEXT_LINES);
             let total = entries.len();
-
-            // Auto scroll to bottom unless frozen
+    
             if !frozen && total > 0 {
-                // saturating_sub(1) is "total - 1" but safe. If tot = 0, it wont go below 0.
                 scroll = total.saturating_sub(1);
             }
 
-            // Iterates every log entry. enumerate() gives both index i and entry e
-            let items: Vec<ListItem> = entries
+            let term_height = terminal.size()?.height as usize;
+            // When expanded the log list only gets half the screen
+            let list_height = if expanded.is_some() {
+                term_height / 2
+            } else {
+                term_height.saturating_sub(1) // minus status bar
+            };
+
+            // Keep view_offset in sync so scroll is always visible
+            if scroll < view_offset {
+                view_offset = scroll;
+            } else if scroll >= view_offset + list_height {
+                view_offset = scroll.saturating_sub(list_height - 1);
+            }
+
+            let visible_entries: Vec<_> = entries
                 .iter()
-                .enumerate()
-                .map(|(_, (idx, is_match, e))| {
-                    // Non JSON lines are shown raw. Otherwise format it as the clean table row.
+                .skip(view_offset)
+                .take(list_height)
+                .collect();
+    
+            let items: Vec<ListItem> = visible_entries
+                .iter()
+                .map(|(idx, is_match, e)| {
                     let line = if e.ts.is_empty() {
                         e.raw.clone()
                     } else {
                         format!("[{}] {:5} | {}", e.ts, e.level, e.msg)
                     };
 
-                    // Errors are Red and BOLD.
-                    // Warning are Yellow.
-                    // Everything else is Gray.
                     let style = if !is_match && !query.is_empty() {
-                        // context lines are dimmed
                         Style::default().fg(theme.dim)
                     } else if e.level == "error" || e.level == "ERROR" {
                         Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
@@ -339,55 +355,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     } else {
                         Style::default().fg(theme.info)
                     };
-
-                    // current selected line gets REVERSED which means foreground and
-                    //-background colors flips, making it look highlighted regardless of the
-                    //-color scheme.
+    
                     let selected = *idx == scroll;
                     let style = if selected {
                         style.add_modifier(Modifier::REVERSED)
                     } else {
                         style
                     };
-
-                    // "ListItem::new(line)" Wraps the formatted string into a ListItem widget.
-                    // Ratatui's List widget doesnt accept raw strings directly, it only 
-                    //-accepts ListItems.
-                    // ".style(style) applies the color and modifer that was decided earlier.
+        
                     ListItem::new(line).style(style)
-                }) // closes .map()
-                .collect(); // .map() produces a lazy iterator, it havent done anything yet.
-                            // .collect() is what forces it to run and gathers all the resulting
-                            //-ListItems into a Vec<ListItem> that ratatui can use.
+                })
+                .collect();
 
-            // three possible status bar status.
-            // typing -> shows current query with / prefix like vim
-            // when frozen or live, show keybinding hints
             let status = if typing {
                 format!("/ {}", query)
             } else if frozen {
-                format!("FROZEN | q: quit  /: filter  Space: unfreeze  ↑↓: scroll")
+                if expanded.is_some() {
+                    format!("FROZEN | q: quit  /: filter  Space: unfreeze  ↑↓: scroll  Enter: collapse")
+                } else {
+                    format!("FROZEN | q: quit  /: filter  Space: unfreeze  ↑↓: scroll  Enter: expand")
+                }
             } else {
-                format!("LIVE   | q: quit  /: filter  Space: freeze    ↑↓: scroll")
+                if expanded.is_some() {
+                    format!("LIVE   | q: quit  /: filter  Space: freeze    ↑↓: scroll  Enter: collapse")
+                } else {
+                    format!("LIVE   | q: quit  /: filter  Space: freeze    ↑↓: scroll  Enter: expand")
+                }
             };
 
-            // "terminal.draw()" takes a closure that receives f(frame)
+            // Find the expanded entry using scroll position in the filtered list
+            let expanded_detail = if let Some(_) = expanded {
+                entries.get(scroll).map(|(_, _, e)| {
+                    match serde_json::from_str::<Value>(&e.raw) {
+                        Ok(json) => serde_json::to_string_pretty(&json)
+                            .unwrap_or(e.raw.clone()),
+                        Err(_) => e.raw.clone(),
+                    }
+                })
+            } else {
+                None
+            };
+
             terminal.draw(|f| {
-                // If something expanded -> 50% / 50% / 1 line (status bar)
-                // If nothing is expaned -> Everything to log list / hide middle / 1 line
-                let constraints = if expanded.is_some(){
-                    vec![Constraint::Percentage(50), Constraint::Percentage(50), Constraint::Length(1)]
-                }else{
+                let constraints = if expanded.is_some() {
+                    vec![
+                        Constraint::Percentage(50),
+                        Constraint::Percentage(50),
+                        Constraint::Length(1),
+                    ]
+                } else {
                     vec![Constraint::Min(1), Constraint::Length(0), Constraint::Length(1)]
                 };
-                // Layout splits the screen vertically into two chunks.
+
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints(constraints)
                     .split(f.area());
 
-                // Creates the list widget from the items and renders it into the top chunk.
-                // Show "No results for your search" if there are no available items for the query
                 if items.is_empty() && !query.is_empty() {
                     let empty = ratatui::widgets::Paragraph::new("No results for your search.")
                         .style(Style::default().fg(GRB_DIMGRAY).bg(GRB_BG));
@@ -399,24 +423,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     f.render_widget(list, chunks[0]);
                 }
 
-                if let Some(idx) = expanded {
-                    let buf = buffer.read().unwrap();
-                    let entries = buf.filtered(&query, CONTEXT_LINES);
-                    if let Some(entry) = entries.get(idx){
-                        let detail = match serde_json::from_str::<Value>(&entry.2.raw){
-                            Ok(json) => serde_json::to_string_pretty(&json).unwrap_or(entry.2.raw.clone()),
-                            Err(_) => entry.2.raw.clone()
-                        };
-                        let panel = ratatui::widgets::Paragraph::new(detail)
-                            .block(Block::default().borders(Borders::ALL).title(" Detail ")
-                            .style(Style::default().bg(GRB_BG).fg(GRB_GRAY)))
-                            .style(Style::default().fg(GRB_WHITE).bg(GRB_BG));
-                        f.render_widget(panel, chunks[1]);
-                    }
+                if let Some(detail) = expanded_detail {
+                    let panel = ratatui::widgets::Paragraph::new(detail)
+                        .block(Block::default().borders(Borders::ALL).title(" Detail ")
+                        .style(Style::default().bg(GRB_BG).fg(GRB_GRAY)))
+                        .style(Style::default().fg(GRB_WHITE).bg(GRB_BG));
+                    f.render_widget(panel, chunks[1]);
                 }
-
-                // Renders the status bar as a Paragraph into the bottom chunk.
-                // Black text on white background
+        
                 let status_widget = ratatui::widgets::Paragraph::new(status)
                     .style(Style::default().fg(GRB_BG).bg(GRB_FG));
                 f.render_widget(status_widget, chunks[2]);
@@ -442,7 +456,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                         query.clear();
                     }
                     KeyCode::Enter if !typing=> { 
-                        if expanded == Some(scroll) {
+                        if expanded.is_some() {
                             expanded = None;
                         } else {
                             expanded = Some(scroll);
