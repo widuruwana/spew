@@ -345,6 +345,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let mut selected_id: Option<usize> = None; // Tracks the exact log we are locked onto
     // Option<usize> means either None (no line expanded) or Some(i) (line i is expanded),
     //-this is how to track which line the panel is showing.
+    
+    let mut frozen_entries: Vec<(usize, bool, LogEntry)> = Vec::new();
     let mut expanded: bool = false;
 
     // view_offset is the index of the first visible line.
@@ -359,7 +361,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         // Draw
         {
             let buf = buffer.read().unwrap();
-            let entries = buf.filtered(&query, CONTEXT_LINES);
+
+            let entries: Vec<(usize, bool, &LogEntry)> = if frozen {
+                frozen_entries.iter().map(|(i, m, e)| (*i, *m, e)).collect()
+            } else {
+                buf.filtered(&query, CONTEXT_LINES)
+            };
+
             let total = entries.len();
 
             let term_height = terminal.size()?.height as usize;
@@ -379,18 +387,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                 }
                 view_offset = scroll.saturating_sub(list_height.saturating_sub(1));
             }else {
-                // Frozen mode: Find where our anchored ID moved to after buffer shifts
-                if let Some(target_id) = selected_id {
-                    if let Some(new_idx) = entries.iter().position(|(_, _, e)| e.id == target_id) {
-                        scroll = new_idx; // Update scroll to wherever the log shifted to
-                    } else {
-                        // The log we were looking at fell off the back of the 10,000 capacity buffer.
-                        // Force unfreeze so the UI doesn't crash.
-                        frozen = false;
-                        expanded = false;
-                    }
-                }
-
                 // Keep view_offset clamped around our newly calculated scroll position
                 if scroll < view_offset {
                     view_offset = scroll;
@@ -571,13 +567,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     }
                     KeyCode::Char(' ') if !typing => {  // "spacebar" -> freeze
                         frozen = !frozen;
-                        if !frozen {
-                            expanded = false; // collapse panel when going live
-
-                            // Snap selection back to the newest log
+                        if frozen {
                             let buf = buffer.read().unwrap();
-                            let total = buf.filtered(&query, CONTEXT_LINES).len();
-                            scroll = total.saturating_sub(1);
+                            frozen_entries = buf.filtered(&query, CONTEXT_LINES)
+                                .into_iter()
+                                .map(|(i, m, e)| (i, m, e.clone()))
+                                .collect();
+                            scroll = frozen_entries.len().saturating_sub(1);
+                            view_offset = scroll.saturating_sub(
+                                terminal.size()?.height as usize / 2
+                            );
+                        } else {
+                            frozen_entries.clear();
+                            expanded = false;
                         }
                     }
                     KeyCode::Char('/') if !typing => {  // "/" -> fileter bar
@@ -594,6 +596,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                         }else{
                             // if navigating toggles a detailed panel
                             frozen = true;
+                            if frozen_entries.is_empty() {
+                                let buf = buffer.read().unwrap();
+                                frozen_entries = buf.filtered(&query, CONTEXT_LINES)
+                                    .into_iter()
+                                    .map(|(i, m, e)| (i, m, e.clone()))
+                                    .collect();
+                                scroll = frozen_entries.len().saturating_sub(1);
+                                view_offset = scroll.saturating_sub(terminal.size()?.height as usize / 2);
+                            }
                             if expanded {
                                 expanded = false;
                             } else {
@@ -610,28 +621,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
                     // Scrolling up autmatically freezes the viewport
                     KeyCode::Up => {
                         frozen = true;
-
-                        let buf = buffer.read().unwrap();
-                        let entries = buf.filtered(&query, CONTEXT_LINES);
-                        
-                        if scroll > 0 && !entries.is_empty(){
-                            scroll -= 1;
-                            selected_id = Some(entries[scroll].2.id);
+                        if frozen_entries.is_empty() {
+                            let buf = buffer.read().unwrap();
+                            frozen_entries = buf.filtered(&query, CONTEXT_LINES)
+                                .into_iter()
+                                .map(|(i, m, e)| (i, m, e.clone()))
+                                .collect();
+                            scroll = frozen_entries.len().saturating_sub(1);
                         }
+                        scroll = scroll.saturating_sub(1);
                     }
                     KeyCode::Down => {
                         frozen = true;
                         // Graphs the read lock on the ring buffer to check how many entries
                         //-currently exist.
-                        let buf = buffer.read().unwrap();
-                        // Runs the current search query and counts how many lines match.
-                        //-(Total number of lines visible on the screen)
-                        let entries = buf.filtered(&query, CONTEXT_LINES);
-                        let total = entries.len();
-                        // Checks if there is actually a line below the current one
-                        if scroll + 1 < total {
-                            scroll += 1; // Moves selection one line down
-                            selected_id = Some(entries[scroll].2.id);
+                        if frozen_entries.is_empty() {
+                            let buf = buffer.read().unwrap();
+                            frozen_entries = buf.filtered(&query, CONTEXT_LINES)
+                                .into_iter()
+                                .map(|(i, m, e)| (i, m, e.clone()))
+                                .collect();
+                            scroll = frozen_entries.len().saturating_sub(1);
+                        }
+                        if scroll + 1 < frozen_entries.len() {
+                            scroll += 1;
                         }
                     }
                     _ => {} // catch-all pattern in Rust match statements.
